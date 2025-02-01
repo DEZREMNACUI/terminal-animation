@@ -15,7 +15,7 @@
    along with term-video.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-use clap::{AppSettings, Clap};
+use clap::Parser;
 use image::{io::Reader, GenericImageView, Pixel};
 use std::{
     fs,
@@ -32,38 +32,38 @@ const CHARS: [char; 13] = [
 ];
  */
 
-#[derive(Clap)]
-#[clap(version = "0.1.0", author = "Pascal Puffke <pascal@pascalpuffke.de>", setting = AppSettings::ColoredHelp)]
+#[derive(Parser)]
+#[command(version = "0.1.0", author = "Pascal Puffke <pascal@pascalpuffke.de>")]
 struct Opts {
-    #[clap(
+    #[arg(
         short,
         long,
         default_value = "split_frames",
-        about = "Where to save temporary frame data"
+        help = "Where to save temporary frame data"
     )]
     cache: String,
-    #[clap(
+    #[arg(
         short,
         long,
-        about = "Input video file, can be any format as long as it's supported by ffmpeg."
+        help = "Input video file, can be any format as long as it's supported by ffmpeg."
     )]
     input: String,
-    #[clap(
+    #[arg(
         short,
         long,
-        about = "Horizontal playback resolution [default: current terminal rows]"
+        help = "Horizontal playback resolution [default: current terminal rows]"
     )]
     width: Option<u32>,
-    #[clap(
+    #[arg(
         short,
         long,
-        about = "Vertical playback resolution [default: current terminal columns]"
+        help = "Vertical playback resolution [default: current terminal columns]"
     )]
     height: Option<u32>,
-    #[clap(
+    #[arg(
         short,
         long,
-        about = "Playback frame rate [default: input video FPS, or 30 should ffprobe fail]"
+        help = "Playback frame rate [default: input video FPS, or 30 should ffprobe fail]"
     )]
     fps: Option<u32>,
 }
@@ -117,25 +117,23 @@ fn get_frame_rate(video: &str) -> Option<u32> {
         .args(vec![
             "-v",
             "error",
-            "-select-streams",
-            "-v:0",
+            "-select_streams",
+            "v:0",
             "-show_entries",
             "stream=r_frame_rate",
             "-of",
-            "csv=s=x:p=0",
+            "default=noprint_wrappers=1:nokey=1",
             video,
         ])
         .output();
 
     if let Ok(out) = ffprobe {
-        if let Ok(parsed) = u32::from_str(
-            String::from_utf8_lossy(&out.stdout)
-                .to_string()
-                .split('/')
-                .nth(0)
-                .expect("Error parsing ffprobe output string"),
-        ) {
-            return Some(parsed);
+        if let Ok(fps_str) = String::from_utf8(out.stdout) {
+            if let Some((num, den)) = fps_str.trim().split_once('/') {
+                if let (Ok(num), Ok(den)) = (num.parse::<f32>(), den.parse::<f32>()) {
+                    return Some((num / den) as u32);
+                }
+            }
         }
     }
 
@@ -144,43 +142,39 @@ fn get_frame_rate(video: &str) -> Option<u32> {
 
 fn display_loop(cache_dir: &str, width: u32, height: u32, frame_rate: u32) {
     let mut frame_buffer = String::with_capacity((height + (width * height)) as usize);
-    let mut display_buffer: Vec<String> =
-        Vec::with_capacity(WalkDir::new(cache_dir).into_iter().skip(1).count());
 
-    WalkDir::new(cache_dir)
+    // 收集并排序所有帧文件
+    let mut frame_files: Vec<_> = WalkDir::new(cache_dir)
         .into_iter()
         .skip(1)
-        .map(|f| {
-            Reader::open(format!(
-                "{}/{}",
-                cache_dir,
-                f.unwrap().file_name().to_str().unwrap()
-            ))
-            .unwrap()
-            .decode()
-            .unwrap()
-        })
-        .for_each(|frame| {
-            for y in 0..height {
-                for x in 0..width {
-                    frame_buffer.push(get_pixel_char(
-                        *frame.get_pixel(x, y).to_luma().0.get(0).unwrap(),
-                    ))
-                }
+        .map(|e| e.unwrap().path().to_owned())
+        .collect();
+    frame_files.sort(); // 按文件名排序
 
-                frame_buffer.push('\n');
+    let mut display_buffer: Vec<String> = Vec::with_capacity(frame_files.len());
+
+    // 按顺序处理每一帧
+    for frame_path in frame_files {
+        let frame = Reader::open(&frame_path).unwrap().decode().unwrap();
+
+        for y in 0..height {
+            for x in 0..width {
+                frame_buffer.push(get_pixel_char(
+                    *frame.get_pixel(x, y).to_luma().0.get(0).unwrap(),
+                ))
             }
+            frame_buffer.push('\n');
+        }
 
-            display_buffer.push(frame_buffer.clone());
-            frame_buffer.clear();
-        });
+        display_buffer.push(frame_buffer.clone());
+        frame_buffer.clear();
+    }
 
     clear_screen();
 
-    // Displaying each frame
+    // 显示每一帧
     for frame in &display_buffer {
         println!("{}", frame);
-
         thread::sleep(Duration::from_micros((1000000 / frame_rate) as u64));
         clear_screen();
     }
