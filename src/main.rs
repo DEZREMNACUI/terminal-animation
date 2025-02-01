@@ -19,6 +19,7 @@ use clap::Parser;
 use image::{io::Reader, GenericImageView, Pixel};
 use std::{
     fs,
+    io::Write,
     process::{exit, Command, Stdio},
     str::FromStr,
     thread,
@@ -143,13 +144,19 @@ fn get_frame_rate(video: &str) -> Option<u32> {
 fn display_loop(cache_dir: &str, width: u32, height: u32, frame_rate: u32) {
     let mut frame_buffer = String::with_capacity((height + (width * height)) as usize);
 
-    // 收集并排序所有帧文件
+    // 清空屏幕并移动到左上角
+    print!("\x1B[2J\x1B[H");
+    // 隐藏光标
+    print!("\x1B[?25l");
+    // 禁用行包装
+    print!("\x1B[?7l");
+
     let mut frame_files: Vec<_> = WalkDir::new(cache_dir)
         .into_iter()
         .skip(1)
         .map(|e| e.unwrap().path().to_owned())
         .collect();
-    frame_files.sort(); // 按文件名排序
+    frame_files.sort();
 
     let mut display_buffer: Vec<String> = Vec::with_capacity(frame_files.len());
 
@@ -170,14 +177,21 @@ fn display_loop(cache_dir: &str, width: u32, height: u32, frame_rate: u32) {
         frame_buffer.clear();
     }
 
-    clear_screen();
-
     // 显示每一帧
     for frame in &display_buffer {
-        println!("{}", frame);
+        // 仅移动光标到起始位置
+        print!("\x1B[H");
+        // 使用单次输出
+        print!("{}", frame);
+        // 立即刷新输出
+        std::io::stdout().flush().unwrap();
         thread::sleep(Duration::from_micros((1000000 / frame_rate) as u64));
-        clear_screen();
     }
+
+    // 恢复终端设置
+    print!("\x1B[?7h"); // 重新启用行包装
+    print!("\x1B[?25h"); // 显示光标
+    print!("\x1B[H\x1B[2J"); // 清屏并回到开始位置
 }
 
 // TODO make this less dumb
@@ -200,5 +214,6 @@ fn get_pixel_char(luminosity: u8) -> char {
 }
 
 fn clear_screen() {
-    print!("{}[2J", 27 as char);
+    // 使用移动光标到开始位置代替完全清屏
+    print!("\x1B[H");
 }
