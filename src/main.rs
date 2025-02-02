@@ -39,7 +39,7 @@ struct Opts {
     #[arg(
         short,
         long,
-        default_value = "split_frames",
+        default_value_t = String::from(env!("CARGO_MANIFEST_DIR")) + "/split_frames",
         help = "Where to save temporary frame data"
     )]
     cache: String,
